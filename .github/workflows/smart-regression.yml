@@ -37,7 +37,11 @@ jobs:
         run: ts-node scripts/filter-tests.ts
 
       - name: Show selected tests
-        run: echo "Selected tests:" && cat selected-tests.json
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "  TESTS SELECTED BY CLAUDE:"
+          cat selected-tests.json
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
       # ── STEP 2: Setup BrowserStack environment ──
       - name: BrowserStack env setup
@@ -48,7 +52,7 @@ jobs:
           build-name:   "PR-${{ inputs.pr_number }}-smart-regression"
           project-name: "AutomationExercise Smart QA"
 
-      # ── STEP 3: Create a fresh BStack TM test run for this PR ──
+      # ── STEP 3: Create a fresh BStack TM test run ──
       - name: Create BStack TM test run
         id: create_run
         env:
@@ -74,7 +78,7 @@ jobs:
           echo "Created test run: $RUN_ID"
           echo "run_id=$RUN_ID" >> $GITHUB_OUTPUT
 
-      # ── STEP 4: Run only selected tests on BrowserStack cloud ──
+      # ── STEP 4: Run only selected tests on BrowserStack ──
       - name: Run selected tests on BrowserStack
         env:
           BROWSERSTACK_USERNAME:   ${{ secrets.BROWSERSTACK_USERNAME }}
@@ -89,44 +93,31 @@ jobs:
             --reporter=list,json \
             --project=chromium
 
-      # ── STEP 5: Post result comment back to the dev repo PR ──
-      # Skipped if pr_number is 0 (manual test run)
-      - name: Post result to PR
-        if: always() && inputs.pr_number != '0'
-        uses: actions/github-script@v7
-        with:
-          github-token: ${{ secrets.TEST_REPO_TOKEN }}
-          script: |
-            let passed = 0, failed = 0
-            try {
-              const fs   = require('fs')
-              const data = JSON.parse(fs.readFileSync('test-results.json', 'utf8'))
-              const specs = data.suites?.flatMap(s => s.specs) ?? []
-              passed = specs.filter(s => s.ok).length
-              failed = specs.filter(s => !s.ok).length
-            } catch(e) {
-              console.log('Could not read results:', e.message)
-            }
-            const icon  = failed === 0 ? '✅' : '❌'
-            const runId = '${{ steps.create_run.outputs.run_id }}'
-            await github.rest.issues.createComment({
-              owner: '${{ inputs.dev_repo }}'.split('/')[0],
-              repo:  '${{ inputs.dev_repo }}'.split('/')[1],
-              issue_number: Number('${{ inputs.pr_number }}'),
-              body: `${icon} **Smart Regression — BrowserStack**\n\n` +
-                    `Tests selected by Claude: ${passed + failed}\n` +
-                    `✅ Passed: ${passed} &nbsp; ❌ Failed: ${failed}\n\n` +
-                    `BStack TM Run: \`${runId}\`\n` +
-                    `_Only tests relevant to this PR were run_`
-            })
-
-      # ── Manual run summary (shows instead of PR comment when pr_number is 0) ──
-      - name: Manual run summary
-        if: always() && inputs.pr_number == '0'
+      # ── STEP 5: Summary ──
+      - name: Run summary
+        if: always()
         run: |
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          echo "  MANUAL TEST RUN COMPLETE"
+          echo "  SMART REGRESSION COMPLETE"
+          echo "  PR:            #${{ inputs.pr_number }}"
+          echo "  Changed files: ${{ inputs.changed_files }}"
           echo "  BStack TM Run: ${{ steps.create_run.outputs.run_id }}"
-          echo "  Check BrowserStack Automate dashboard"
-          echo "  for session recordings and results"
+          echo ""
+          echo "  Results — check test-results.json"
+          echo "  Session recordings on BrowserStack"
+          echo "  Automate dashboard"
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          cat test-results.json | python3 -c "
+          import sys, json
+          try:
+            data = json.load(sys.stdin)
+            suites = data.get('suites', [])
+            specs = [s for suite in suites for s in suite.get('specs', [])]
+            passed = sum(1 for s in specs if s.get('ok'))
+            failed = sum(1 for s in specs if not s.get('ok'))
+            print(f'  Passed: {passed}')
+            print(f'  Failed: {failed}')
+            print(f'  Total:  {passed + failed}')
+          except Exception as e:
+            print(f'  Could not parse results: {e}')
+          " || echo "  Results file not available"
