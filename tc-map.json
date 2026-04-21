@@ -1,0 +1,4 @@
+{
+    "tests/auth/login-valid.spec.ts": "TC-001",
+    "tests/auth/login-invalid.spec.ts": "TC-002"
+}

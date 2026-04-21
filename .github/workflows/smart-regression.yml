@@ -1,0 +1,92 @@
+name: Smart Regression — BrowserStack
+
+on:
+  workflow_dispatch:
+    inputs:
+      pr_title:      { description: 'PR title',      required: true }
+      pr_body:       { description: 'PR body',        required: true }
+      changed_files: { description: 'Changed files',  required: true }
+      pr_number:     { description: 'PR number',      required: true }
+      dev_repo:      { description: 'Dev repo name',  required: true }
+
+jobs:
+  smart-regression:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout ae-test-suite
+        uses: actions/checkout@v4
+
+      - name: Setup Node 20
+        uses: actions/setup-node@v4
+        with: { node-version: '20' }
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install ts-node
+        run: npm install -g ts-node typescript
+
+      # Step 1 — Claude filters which tests to run
+      - name: Filter tests with Claude
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          PR_TITLE:          ${{ inputs.pr_title }}
+          PR_BODY:           ${{ inputs.pr_body }}
+          CHANGED_FILES:     ${{ inputs.changed_files }}
+        run: ts-node scripts/filter-tests.ts
+
+      - name: Show selected tests
+        run: echo "Selected tests:" && cat selected-tests.json
+
+      # Step 2 — Setup BrowserStack
+      - name: BrowserStack env setup
+        uses: browserstack/github-actions/setup-env@master
+        with:
+          username:    ${{ secrets.BROWSERSTACK_USERNAME }}
+          access-key:  ${{ secrets.BROWSERSTACK_ACCESS_KEY }}
+          build-name:  "PR-${{ inputs.pr_number }}-smart-regression"
+          project-name: "AutomationExercise Smart QA"
+
+      # Step 3 — Run only selected tests on BrowserStack cloud
+      - name: Run selected tests on BrowserStack
+        env:
+          BROWSERSTACK_USERNAME:   ${{ secrets.BROWSERSTACK_USERNAME }}
+          BROWSERSTACK_ACCESS_KEY: ${{ secrets.BROWSERSTACK_ACCESS_KEY }}
+          BSTACK_PROJECT_ID:       ${{ secrets.BSTACK_PROJECT_ID }}
+          BSTACK_TEST_RUN_ID:      ${{ secrets.BSTACK_TEST_RUN_ID }}
+        run: |
+          TESTS=$(cat selected-tests.json | python3 -c \
+            "import sys,json; print(' '.join(json.load(sys.stdin)))")
+          echo "Running: $TESTS"
+          npx playwright test $TESTS \
+            --reporter=list,json \
+            --project=chromium
+
+      # Step 4 — Post result comment back to the dev repo PR
+      - name: Post result to PR
+        if: always()
+        uses: actions/github-script@v7
+        env:
+          TOKEN: ${{ secrets.TEST_REPO_TOKEN }}
+        with:
+          github-token: ${{ secrets.TEST_REPO_TOKEN }}
+          script: |
+            let passed = 0, failed = 0, body = ''
+            try {
+              const fs   = require('fs')
+              const data = JSON.parse(fs.readFileSync('test-results.json','utf8'))
+              const specs = data.suites?.flatMap(s => s.specs) ?? []
+              passed = specs.filter(s => s.ok).length
+              failed = specs.filter(s => !s.ok).length
+            } catch(e) { body = 'Could not read results file\n' }
+            const icon = failed === 0 ? '✅' : '❌'
+            await github.rest.issues.createComment({
+              owner: '${{ inputs.dev_repo }}'.split('/')[0],
+              repo:  '${{ inputs.dev_repo }}'.split('/')[1],
+              issue_number: Number('${{ inputs.pr_number }}'),
+              body: `${icon} **Smart Regression — BrowserStack**\n\n` +
+                    `Tests selected by Claude: ${passed + failed}\n` +
+                    `✅ Passed: ${passed}   ❌ Failed: ${failed}\n\n` +
+                    `_Only tests relevant to this PR were run_`
+            })
