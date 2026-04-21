@@ -1,4 +1,6 @@
 {
     "tests/auth/login-valid.spec.ts": "TC-001",
-    "tests/auth/login-invalid.spec.ts": "TC-002"
+    "tests/auth/login-invalid.spec.ts": "TC-002",
+    "tests/checkout/guest-checkout.spec.ts": "TC-041",
+    "tests/checkout/registered-checkout.spec.ts": "TC-042"
 }
