@@ -3,11 +3,11 @@ name: Smart Regression — Chrome
 on:
   workflow_dispatch:
     inputs:
-      pr_title:      { description: 'PR title',      required: true }
-      pr_body:       { description: 'PR body',        required: true }
-      changed_files: { description: 'Changed files',  required: true }
-      pr_number:     { description: 'PR number',      required: true }
-      dev_repo:      { description: 'Dev repo name',  required: true }
+      pr_title: { description: "PR title", required: true }
+      pr_body: { description: "PR body", required: true }
+      changed_files: { description: "Changed files", required: true }
+      pr_number: { description: "PR number", required: true }
+      dev_repo: { description: "Dev repo name", required: true }
 
 jobs:
   smart-regression:
@@ -19,13 +19,14 @@ jobs:
 
       - name: Setup Node 20
         uses: actions/setup-node@v4
-        with: { node-version: '20' }
+        with: { node-version: "20" }
 
       - name: Install dependencies
         run: npm ci
 
-      - name: Install Playwright Chrome
-        run: npx playwright install chrome --with-deps
+      # NEW
+      - name: Install Playwright Chromium
+        run: npx playwright install chromium --with-deps
 
       - name: Install tsx
         run: npm install -g tsx
@@ -33,11 +34,11 @@ jobs:
       # ── STEP 1: Claude filters which tests to run ──
       - name: Filter tests with Claude
         env:
-          ANTHROPIC_API_KEY:  ${{ secrets.ANTHROPIC_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           ANTHROPIC_BASE_URL: ${{ secrets.ANTHROPIC_BASE_URL }}
-          PR_TITLE:           ${{ inputs.pr_title }}
-          PR_BODY:            ${{ inputs.pr_body }}
-          CHANGED_FILES:      ${{ inputs.changed_files }}
+          PR_TITLE: ${{ inputs.pr_title }}
+          PR_BODY: ${{ inputs.pr_body }}
+          CHANGED_FILES: ${{ inputs.changed_files }}
         run: tsx scripts/filter-tests.ts
 
       - name: Show selected tests
