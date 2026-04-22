@@ -30,11 +30,10 @@ jobs:
       # ── STEP 1: Claude filters which tests to run ──
       - name: Filter tests with Claude
         env:
-          ANTHROPIC_API_KEY:  ${{ secrets.ANTHROPIC_API_KEY }}
-          ANTHROPIC_BASE_URL: ${{ secrets.ANTHROPIC_BASE_URL }}
-          PR_TITLE:           ${{ inputs.pr_title }}
-          PR_BODY:            ${{ inputs.pr_body }}
-          CHANGED_FILES:      ${{ inputs.changed_files }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          PR_TITLE:          ${{ inputs.pr_title }}
+          PR_BODY:           ${{ inputs.pr_body }}
+          CHANGED_FILES:     ${{ inputs.changed_files }}
         run: tsx scripts/filter-tests.ts
 
       - name: Show selected tests
@@ -61,25 +60,20 @@ jobs:
           BROWSERSTACK_ACCESS_KEY: ${{ secrets.BROWSERSTACK_ACCESS_KEY }}
           BSTACK_PROJECT_ID:       ${{ secrets.BSTACK_PROJECT_ID }}
         run: |
-          RESPONSE=$(curl -s \
-            -u "$BROWSERSTACK_USERNAME:$BROWSERSTACK_ACCESS_KEY" \
+          RESPONSE=$(curl -s -u \
+            "$BROWSERSTACK_USERNAME:$BROWSERSTACK_ACCESS_KEY" \
             -X POST \
             -H "Content-Type: application/json" \
             -d "{
-              \"test_run\": {
-                \"name\": \"Smart Regression PR #${{ inputs.pr_number }}\",
-                \"description\": \"Triggered by: ${{ inputs.pr_title }}\"
-              }
+              \"name\": \"Smart Regression — PR #${{ inputs.pr_number }}\",
+              \"description\": \"Auto triggered by: ${{ inputs.pr_title }}\"
             }" \
             "https://test-management.browserstack.com/api/v2/projects/$BSTACK_PROJECT_ID/test-runs")
 
           echo "API Response: $RESPONSE"
 
-          RUN_ID=$(echo "$RESPONSE" | jq -r '.test_run.identifier // .identifier // empty')
-          if [ -z "$RUN_ID" ]; then
-            echo "Failed to extract test run ID from BrowserStack response"
-            exit 1
-          fi
+          RUN_ID=$(echo $RESPONSE | python3 -c \
+            "import sys,json; print(json.load(sys.stdin)['test_run']['identifier'])")
 
           echo "Created test run: $RUN_ID"
           echo "run_id=$RUN_ID" >> $GITHUB_OUTPUT
@@ -108,18 +102,22 @@ jobs:
           echo "  PR:            #${{ inputs.pr_number }}"
           echo "  Changed files: ${{ inputs.changed_files }}"
           echo "  BStack TM Run: ${{ steps.create_run.outputs.run_id }}"
+          echo ""
+          echo "  Results — check test-results.json"
+          echo "  Session recordings on BrowserStack"
+          echo "  Automate dashboard"
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
           cat test-results.json | python3 -c "
-import sys, json
-try:
-    data = json.load(sys.stdin)
-    suites = data.get('suites', [])
-    specs = [s for suite in suites for s in suite.get('specs', [])]
-    passed = sum(1 for s in specs if s.get('ok'))
-    failed = sum(1 for s in specs if not s.get('ok'))
-    print(f'  Passed: {passed}')
-    print(f'  Failed: {failed}')
-    print(f'  Total:  {passed + failed}')
-except Exception as e:
-    print(f'  Could not parse results: {e}')
-" || echo "  Results file not available"
+          import sys, json
+          try:
+            data = json.load(sys.stdin)
+            suites = data.get('suites', [])
+            specs = [s for suite in suites for s in suite.get('specs', [])]
+            passed = sum(1 for s in specs if s.get('ok'))
+            failed = sum(1 for s in specs if not s.get('ok'))
+            print(f'  Passed: {passed}')
+            print(f'  Failed: {failed}')
+            print(f'  Total:  {passed + failed}')
+          except Exception as e:
+            print(f'  Could not parse results: {e}')
+          " || echo "  Results file not available"
