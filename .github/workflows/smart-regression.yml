@@ -1,4 +1,4 @@
-name: Smart Regression — BrowserStack
+name: Smart Regression — Chrome
 
 on:
   workflow_dispatch:
@@ -24,6 +24,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Install Playwright Chrome
+        run: npx playwright install chrome --with-deps
+
       - name: Install tsx
         run: npm install -g tsx
 
@@ -40,48 +43,12 @@ jobs:
       - name: Show selected tests
         run: |
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          echo "  TESTS SELECTED BY CLAUDE:"
+          echo "  TESTS SELECTED:"
           cat selected-tests.json
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
-      # ── STEP 2: Setup BrowserStack environment ──
-      - name: BrowserStack env setup
-        uses: browserstack/github-actions/setup-env@master
-        with:
-          username:     ${{ secrets.BROWSERSTACK_USERNAME }}
-          access-key:   ${{ secrets.BROWSERSTACK_ACCESS_KEY }}
-          build-name:   "PR-${{ inputs.pr_number }}-smart-regression"
-          project-name: "AutomationExercise Smart QA"
-
-      # ── STEP 3: Create a fresh BStack TM test run ──
-      - name: Create BStack TM test run
-        id: create_run
-        env:
-          BROWSERSTACK_USERNAME:   ${{ secrets.BROWSERSTACK_USERNAME }}
-          BROWSERSTACK_ACCESS_KEY: ${{ secrets.BROWSERSTACK_ACCESS_KEY }}
-          BSTACK_PROJECT_ID:       ${{ secrets.BSTACK_PROJECT_ID }}
-        run: |
-          RESPONSE=$(curl -s \
-            -u "$BROWSERSTACK_USERNAME:$BROWSERSTACK_ACCESS_KEY" \
-            -X POST \
-            -H "Content-Type: application/json" \
-            -d "{\"test_run\":{\"name\":\"Smart Regression PR #${{ inputs.pr_number }}\",\"description\":\"Triggered by: ${{ inputs.pr_title }}\"}}" \
-            "https://test-management.browserstack.com/api/v2/projects/$BSTACK_PROJECT_ID/test-runs")
-
-          echo "API Response: $RESPONSE"
-
-          RUN_ID=$(echo $RESPONSE | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['test_run']['identifier']) if 'test_run' in d else print(d.get('identifier','TR-UNKNOWN'))")
-
-          echo "Created test run: $RUN_ID"
-          echo "run_id=$RUN_ID" >> $GITHUB_OUTPUT
-
-      # ── STEP 4: Run only selected tests on BrowserStack ──
-      - name: Run selected tests on BrowserStack
-        env:
-          BROWSERSTACK_USERNAME:   ${{ secrets.BROWSERSTACK_USERNAME }}
-          BROWSERSTACK_ACCESS_KEY: ${{ secrets.BROWSERSTACK_ACCESS_KEY }}
-          BSTACK_PROJECT_ID:       ${{ secrets.BSTACK_PROJECT_ID }}
-          BSTACK_TEST_RUN_ID:      ${{ steps.create_run.outputs.run_id }}
+      # ── STEP 2: Run selected tests in Chrome ──
+      - name: Run selected tests in Chrome
         run: |
           TESTS=$(cat selected-tests.json | python3 -c "import sys,json; print(' '.join(json.load(sys.stdin)))")
           echo "Running: $TESTS"
@@ -89,7 +56,18 @@ jobs:
             --reporter=list,json \
             --project=chromium
 
-      # ── STEP 5: Summary ──
+      # ── STEP 3: Upload test report as artifact ──
+      - name: Upload test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-pr-${{ inputs.pr_number }}
+          path: |
+            test-results.json
+            playwright-report/
+          retention-days: 7
+
+      # ── STEP 4: Summary ──
       - name: Run summary
         if: always()
         run: |
@@ -97,6 +75,6 @@ jobs:
           echo "  SMART REGRESSION COMPLETE"
           echo "  PR:            #${{ inputs.pr_number }}"
           echo "  Changed files: ${{ inputs.changed_files }}"
-          echo "  BStack TM Run: ${{ steps.create_run.outputs.run_id }}"
+          echo "  Runner:        GitHub Ubuntu + Chrome"
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          cat test-results.json | python3 -c "import sys,json; data=json.load(sys.stdin); specs=[s for suite in data.get('suites',[]) for s in suite.get('specs',[])]; print(f'  Passed: {sum(1 for s in specs if s.get(chr(111)+chr(107)))}'); print(f'  Failed: {sum(1 for s in specs if not s.get(chr(111)+chr(107)))}'); print(f'  Total:  {len(specs)}')" || echo "  Results file not available"
+          cat test-results.json | python3 -c "import sys,json; data=json.load(sys.stdin); specs=[s for suite in data.get('suites',[]) for s in suite.get('specs',[])]; passed=sum(1 for s in specs if s.get('ok')); failed=sum(1 for s in specs if not s.get('ok')); print(f'  Passed: {passed}\n  Failed: {failed}\n  Total:  {passed+failed}')" || echo "  Results file not available"
